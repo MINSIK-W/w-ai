@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import user_group from '/images/user_group.png';
+import { Routes } from '@/constants/routes.ts';
 export default function Hero() {
   const navigate = useNavigate();
   return (
@@ -16,7 +17,7 @@ export default function Hero() {
       </div>
       <div className="flex flex-wrap justify-center gap-4 text-sm max-sm:text-xs">
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate(Routes.AI)}
           className="bg-primary text-white px-10 py-3 rounded-lg hover:scale-102 active:scale-95 transition cursor-pointer"
         >
           지금 바로 시작하기
