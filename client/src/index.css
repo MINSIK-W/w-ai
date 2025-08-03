@@ -3,3 +3,14 @@
 @theme{
 	--color-primary: #0A1543;
 }
+*{
+	font-family: 'Noto Sans KR', sans-serif;
+	word-break: keep-all
+}
+body{color: #333;}
+.reset-tw, .reset-tw *{
+	all: revert !important;
+}
+.cl-drawerRoot{
+	z-index: 10;
+}
