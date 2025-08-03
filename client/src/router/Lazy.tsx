@@ -7,3 +7,8 @@ export const LazyBlogTitles = lazy(() => import('@/pages/BlogTitles.tsx'));
 export const LazyGenerateImages = lazy(
   () => import('@/pages/GenerateImages.tsx')
 );
+export const LazyRemoveBackground = lazy(
+  () => import('@/pages/RemoveBackground.tsx')
+);
+export const LazyRemoveObject = lazy(() => import('@/pages/RemoveObject.tsx'));
+export const LazyReviewResums = lazy(() => import('@/pages/ReviewResums.tsx'));
