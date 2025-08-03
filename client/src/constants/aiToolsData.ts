@@ -1,4 +1,4 @@
-import type { AiTool, BaseItem, ToolKey } from '@/type/AiTool.ts';
+import type { AiTool, BaseItem, Sidebar, ToolKey } from '@/type/AiTool.ts';
 import { Routes } from '@/constants/routes.ts';
 import {
   Eraser,
@@ -7,6 +7,8 @@ import {
   Scissors,
   SquarePen,
   FileText,
+  Home,
+  Users,
 } from 'lucide-react';
 
 const AI_TOOLS_BASE: Record<ToolKey, BaseItem> = {
@@ -55,4 +57,14 @@ export const AI_TOOLS_DATA: AiTool[] = [
     bg: { from: '#12B7AC', to: '#08B6CE' },
     ...AI_TOOLS_BASE.removeObject,
   },
+];
+export const SIDEBAR_DATA: Sidebar[] = [
+  { label: '대시보드', icon: Home, path: Routes.AI },
+  { label: '글 작성', ...AI_TOOLS_BASE.writeArticle },
+  { label: '블로그 제목 추천', ...AI_TOOLS_BASE.blogTitles },
+  { label: '이미지 생성', ...AI_TOOLS_BASE.generateImages },
+  { label: '배경 제거', ...AI_TOOLS_BASE.removeBackground },
+  { label: '요소 제거', ...AI_TOOLS_BASE.removeObject },
+  { label: '이력서 피드백', ...AI_TOOLS_BASE.reviewResums },
+  { label: '커뮤니티', icon: Users, path: Routes.AI_COMMUNITY },
 ];

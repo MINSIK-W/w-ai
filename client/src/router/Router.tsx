@@ -1,10 +1,14 @@
 import { createBrowserRouter } from 'react-router-dom';
-import { LazyHome } from './Lazy.tsx';
-import { ROUTES } from '@/constants/ROUTES.ts';
+import { LazyHome, LazyLayout } from './Lazy.tsx';
+import { Routes } from '@/constants/routes.ts';
 
 export const Router = createBrowserRouter([
   {
-    path: ROUTES.HOME,
+    path: Routes.HOME,
     element: <LazyHome />,
+  },
+  {
+    path: Routes.AI,
+    element: <LazyLayout />,
   },
 ]);

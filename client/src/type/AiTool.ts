@@ -22,3 +22,6 @@ export interface AiTool extends BaseItem {
     to: string;
   };
 }
+export interface Sidebar extends BaseItem {
+  label: string;
+}
