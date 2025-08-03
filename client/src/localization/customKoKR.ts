@@ -2,9 +2,13 @@ import { koKR } from '@clerk/localizations';
 
 export const customKoKR = {
   ...koKR,
+  badge__activePlan: '활성화',
   commerce: {
     ...koKR.commerce,
     subscribe: '구독하기',
+    reSubscribe: '재구독',
+    month: '월',
+    alwaysFree: '항상 무료',
     paymentSource: {
       ...koKR.commerce?.paymentSource,
       dev: {
