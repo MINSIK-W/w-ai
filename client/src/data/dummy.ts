@@ -27,3 +27,90 @@ export const dummyTestimonialData = [
     rating: 4,
   },
 ];
+
+export interface CreationItemData {
+  id: number;
+  user_id: string;
+  prompt: string;
+  content: string;
+  type: string;
+  publish: boolean;
+  likes: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export const dummyCreationData: CreationItemData[] = [
+  {
+    id: 9,
+    user_id: 'user_2yMX02PRbyMtQK6PebpjnxvRNIA',
+    prompt: '기술 관련 블로그 제목 추천',
+    content: `기술 분야 블로그에 어울릴 만한 제목 아이디어를 정리해봤습니다.
+
+**가장 무난한 제목**
+
+* 테크 블로그: 최신 뉴스와 리뷰
+* 오늘의 기술: 알아두면 좋은 IT 소식
+* 미래를 만드는 기술 이야기
+* 테크 토크: 새로운 혁신을 말하다
+
+**조금 더 센스 있는 제목**
+
+* 디지털 인사이트: 기술 세상 들여다보기
+* 기기 너머의 이야기: 기술과 삶의 연결`,
+    type: '블로그 제목 추천',
+    publish: false,
+    likes: [],
+    created_at: '2025-07-01T11:09:50.492Z',
+    updated_at: '2025-07-01T11:09:50.492Z',
+  },
+  {
+    id: 8,
+    user_id: 'user_2yMX02PRbyMtQK6PebpjnxvRNIA',
+    prompt: '일반 블로그 제목 추천',
+    content: `다양한 주제의 블로그에 쓸 수 있는 제목 예시를 준비했습니다.
+
+**쉽고 직관적인 제목**
+
+* 블로그 가이드: 글쓰기부터 운영까지
+* 블로깅 인사이트: 꿀팁과 최신 트렌드
+* 블로그 초보자를 위한 모든 것
+
+**조금 더 감각적인 제목**
+
+* 글 너머의 이야기: 블로깅의 매력 찾기
+* 블로그 세상 탐험기: 온라인 글쓰기의 모든 것`,
+    type: '블로그 제목 추천',
+    publish: false,
+    likes: [],
+    created_at: '2025-07-01T11:08:10.450Z',
+    updated_at: '2025-07-01T11:08:10.450Z',
+  },
+  {
+    id: 7,
+    user_id: 'user_2yMX02PRbyMtQK6PebpjnxvRNIA',
+    prompt: 'AI와 코딩의 관계를 짧게 설명하는 글 작성',
+    content: `## AI와 코딩, 함께 진화하는 기술
+
+AI와 코딩은 이제 떼려야 뗄 수 없는 관계가 됐습니다. AI는 인간처럼 학습하고 문제를 해결하는 기술이고, 코딩은 그 AI를 움직이게 하는 언어입니다.
+
+**코딩이 AI를 만드는 과정**
+
+AI 모델은 데이터 준비부터 학습, 배포까지 모두 코드로 만들어집니다. 파이썬이나 R 같은 언어와 TensorFlow, PyTorch 같은 라이브러리가 주로 활용됩니다.
+
+**AI가 개발 방식을 바꾸는 이유**
+
+요즘은 AI가 코드 자동 완성, 테스트, 디버깅까지 도와주면서 개발 속도를 높여줍니다. 심지어 자연어로 설명만 해도 코드를 만들어주는 도구도 나오고 있습니다.
+
+**앞으로 개발자의 역할**
+
+앞으로는 단순 코딩보다는 설계와 최적화, AI 활용 능력이 더 중요해질 것입니다. AI와 코딩은 서로를 보완하며 개발의 새로운 가능성을 열고 있습니다.
+
+결국, 코딩은 AI의 기반이고 AI는 코딩의 효율을 높여주는 파트너입니다.`,
+    type: '글 작성',
+    publish: false,
+    likes: [],
+    created_at: '2025-07-01T11:07:51.312Z',
+    updated_at: '2025-07-01T11:07:51.312Z',
+  },
+];

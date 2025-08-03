@@ -1,5 +1,5 @@
 import { createBrowserRouter } from 'react-router-dom';
-import { LazyHome, LazyLayout } from './Lazy.tsx';
+import { LazyDashboard, LazyHome, LazyLayout } from './Lazy.tsx';
 import { Routes } from '@/constants/routes.ts';
 
 export const Router = createBrowserRouter([
@@ -10,5 +10,6 @@ export const Router = createBrowserRouter([
   {
     path: Routes.AI,
     element: <LazyLayout />,
+    children: [{ index: true, element: <LazyDashboard /> }],
   },
 ]);
