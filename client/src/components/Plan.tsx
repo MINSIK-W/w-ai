@@ -4,7 +4,7 @@ export default function Plan() {
   return (
     <div className="max-w-2xl mx-auto z-20 my-32">
       <div className="text-center">
-        <h2 className="text-slate-700 text-[42px] font-semibold">
+        <h2 className="text-slate-700 text-[40px] font-semibold">
           나에게 맞는 요금제를 선택해보세요.
         </h2>
         <p className="text-gray-500 max-w-lg mx-auto">
