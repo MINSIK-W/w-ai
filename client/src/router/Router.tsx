@@ -1,5 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom';
 import {
+  LazyBlogTitles,
   LazyDashboard,
   LazyHome,
   LazyLayout,
@@ -18,6 +19,7 @@ export const Router = createBrowserRouter([
     children: [
       { index: true, element: <LazyDashboard /> },
       { path: Routes.AI_WRITE_ARTICLE, element: <LazyWriteArticle /> },
+      { path: Routes.AI_BLOG_TITLES, element: <LazyBlogTitles /> },
     ],
   },
 ]);
