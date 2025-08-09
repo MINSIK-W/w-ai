@@ -8,8 +8,5 @@
         "distDir": "dist"
       }
     }
-  ],
-  "buildCommand": "cd client && npm ci --force && npm run build",
-  "installCommand": "cd client && npm install --force",
-  "framework": "vite"
+  ]
 }
