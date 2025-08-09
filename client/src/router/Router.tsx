@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router-dom';
 import {
   LazyBlogTitles,
+  LazyCommunity,
   LazyDashboard,
   LazyGenerateImages,
   LazyHome,
@@ -28,6 +29,7 @@ export const Router = createBrowserRouter([
       { path: Routes.AI_REMOVE_BACKGROUND, element: <LazyRemoveBackground /> },
       { path: Routes.AI_REMOVE_OBJECT, element: <LazyRemoveObject /> },
       { path: Routes.AI_REVIEW_RESUMS, element: <LazyReviewResums /> },
+      { path: Routes.AI_COMMUNITY, element: <LazyCommunity /> },
     ],
   },
 ]);

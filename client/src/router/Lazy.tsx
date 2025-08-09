@@ -12,3 +12,4 @@ export const LazyRemoveBackground = lazy(
 );
 export const LazyRemoveObject = lazy(() => import('@/pages/RemoveObject.tsx'));
 export const LazyReviewResums = lazy(() => import('@/pages/ReviewResums.tsx'));
+export const LazyCommunity = lazy(() => import('@/pages/Community.tsx'));
