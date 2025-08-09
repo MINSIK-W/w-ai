@@ -31,7 +31,7 @@ import {
   ImageRequestBody,
   ObjectRemovalRequestBody,
   ERROR_CODES,
-} from '../types';
+} from '../types/index.js';
 
 // AI 클라이언트 초기화
 const AI = new OpenAI({
