@@ -14,16 +14,16 @@ import {
   validateArticleLength,
   validatePdfFile,
   validateImageFile,
-} from '@/utils/validation';
+} from '../utils/validation.js';
 import {
   safeExtractUserId,
   updateUsage,
   getUserPlan,
   getFreeUsage,
   isPremiumUser,
-} from '@/utils/auth';
-import { logError, logSuccess } from '@/utils/logger';
-import { createUserCreation } from '@/utils/database';
+} from '../utils/auth.js';
+import { logError, logSuccess } from '../utils/logger.js';
+import { createUserCreation } from '../utils/database.js';
 import {
   ContentResponse,
   ArticleRequestBody,
@@ -31,7 +31,7 @@ import {
   ImageRequestBody,
   ObjectRemovalRequestBody,
   ERROR_CODES,
-} from '@/types';
+} from '../types';
 
 // AI 클라이언트 초기화
 const AI = new OpenAI({

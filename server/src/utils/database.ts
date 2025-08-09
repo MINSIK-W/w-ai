@@ -4,7 +4,7 @@ import {
   transformRawCreation,
   UserCreation,
   CreationType,
-} from '@/types';
+} from '../types';
 import { logError } from './logger.js';
 // 데이터베이스 헬퍼 함수
 // 사용자 게시물 생성

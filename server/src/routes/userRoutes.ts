@@ -4,7 +4,7 @@ import {
   getPublishedCreations,
   getUserCreations,
   toggleLikeCreation,
-} from '@/controllers/userController';
+} from '../controllers/userController.js';
 
 const userRoutes = express();
 

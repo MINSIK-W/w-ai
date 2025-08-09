@@ -1,5 +1,5 @@
 import express, { Router } from 'express';
-import { auth } from '@/middlewares/auth.js';
+import { auth } from '../middlewares/auth.js';
 import {
   article,
   background,
@@ -7,8 +7,8 @@ import {
   images,
   object,
   resumes,
-} from '@/controllers/aiController';
-import { upload } from '@/configs/multer';
+} from '../controllers/aiController.js';
+import { upload } from '../configs/multer.js';
 
 const aiRouter: Router = express.Router();
 
