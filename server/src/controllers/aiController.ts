@@ -1,61 +1,37 @@
 import OpenAI from 'openai';
-import sql from '@/configs/db';
-import { clerkClient } from '@clerk/express';
 import { Request, Response } from 'express';
 import axios from 'axios';
 import { v2 as cloudinary } from 'cloudinary';
 import fs from 'fs';
 import pdf from 'pdf-parse/lib/pdf-parse.js';
 
-// 요청 바디 타입
-interface ArticleRequestBody {
-  prompt: string;
-  length: number;
-}
-
-interface BlogTitleRequestBody {
-  prompt: string;
-}
-
-interface ImageRequestBody {
-  prompt: string;
-  publish?: boolean;
-}
-interface BackgroundRequestBody {
-  prompt: string;
-}
-interface ObjectRemovalRequestBody {
-  object: string;
-}
-// 응답 타입
-interface ContentSuccessResponse {
-  success: true;
-  content: string;
-  usage?: number;
-}
-
-interface ContentErrorResponse {
-  success: false;
-  message: string;
-  code?: string;
-  estimatedTime?: number;
-}
-
-type ContentResponse = ContentSuccessResponse | ContentErrorResponse;
-
-// 환경변수 검증
-const validateEnvironment = (): void => {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY 환경 변수 누락 확인 바람.');
-  }
-  if (
-    !process.env.CLOUDINARY_CLOUD_NAME ||
-    !process.env.CLOUDINARY_API_KEY ||
-    !process.env.CLOUDINARY_API_SECRET
-  ) {
-    throw new Error('CLOUDINARY_ 환경 변수 누락 확인 바람.');
-  }
-};
+import {
+  validateEnvironment,
+  validateAuthentication,
+  validateUsageLimit,
+  sanitizeInput,
+  validatePrompt,
+  validateArticleLength,
+  validatePdfFile,
+  validateImageFile,
+} from '@/utils/validation';
+import {
+  safeExtractUserId,
+  updateUsage,
+  getUserPlan,
+  getFreeUsage,
+  isPremiumUser,
+} from '@/utils/auth';
+import { logError, logSuccess } from '@/utils/logger';
+import { createUserCreation } from '@/utils/database';
+import {
+  ContentResponse,
+  ArticleRequestBody,
+  BlogTitleRequestBody,
+  ImageRequestBody,
+  ObjectRemovalRequestBody,
+  ERROR_CODES,
+} from '@/types';
 
 // AI 클라이언트 초기화
 const AI = new OpenAI({
@@ -63,155 +39,144 @@ const AI = new OpenAI({
   baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
 });
 
-// 공통 유효성 검사 함수
-const validateAuthentication = (userId: string | undefined): boolean => {
-  return Boolean(userId && userId.trim().length > 0);
-};
-
-const validateUsageLimit = (plan: string, freeUsage: number): boolean => {
-  return plan === 'premium' || freeUsage < 10;
-};
-
-const sanitizeInput = (input: string): string => {
-  return input.trim().replace(/[<>]/g, ''); // 기본적인 XSS 방지
-};
-
-// 공통 에러 로깅 함수
-const logError = (operation: string, error: unknown, userId?: string): void => {
-  console.error(`${operation} error:`, {
-    message: error instanceof Error ? error.message : 'Unknown error',
-    stack: error instanceof Error ? error.stack : undefined,
-    userId: userId || 'unknown',
-    timestamp: new Date().toISOString(),
-    operation,
+// 공통 에러 응답 함수
+const createErrorResponse = (
+  res: Response<ContentResponse>,
+  statusCode: number,
+  message: string,
+  code?: string
+): Response<ContentResponse> => {
+  return res.status(statusCode).json({
+    success: false,
+    message,
+    code,
   });
 };
 
-// 사용량 업데이트 공통 함수
-const updateUsage = async (
-  userId: string,
-  currentUsage: number
-): Promise<void> => {
-  try {
-    await clerkClient.users.updateUserMetadata(userId, {
-      privateMetadata: {
-        free_usage: currentUsage + 1,
-      },
-    });
-  } catch (error) {
-    logError('Usage update', error, userId);
-    // 사용량 업데이트 실패는 치명적이지 않으므로 에러를 던지지 않음
+// 공통 성공 응답 함수
+const createSuccessResponse = (
+  res: Response<ContentResponse>,
+  content: string,
+  usage?: number
+): Response<ContentResponse> => {
+  return res.status(200).json({
+    success: true,
+    content,
+    usage,
+  });
+};
+
+// 공통 AI 요청 함수
+const makeAIRequest = async (
+  prompt: string,
+  maxTokens: number = 1000,
+  temperature: number = 0.7
+): Promise<string> => {
+  const response = await Promise.race([
+    AI.chat.completions.create({
+      model: 'gemini-2.0-flash',
+      messages: [{ role: 'user', content: prompt }],
+      temperature,
+      max_completion_tokens: maxTokens,
+    }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('AI request timeout')), 30000)
+    ),
+  ]);
+
+  const content = response.choices[0]?.message?.content;
+
+  if (!content || content.trim().length === 0) {
+    throw new Error('AI 응답 생성이 실패했습니다.');
   }
+
+  return content;
 };
 
 export const article = async (
   req: Request<{}, ContentResponse, ArticleRequestBody>,
   res: Response<ContentResponse>
 ): Promise<Response<ContentResponse>> => {
+  let userId: string | null = null;
+
   try {
     validateEnvironment();
 
-    const { userId } = await req.auth();
-
-    if (!validateAuthentication(userId)) {
-      return res.status(401).json({
-        success: false,
-        message: '사용자 인증이 실패했습니다.',
-        code: '권한 없는 사용자',
-      });
+    userId = await safeExtractUserId(req);
+    if (!userId) {
+      return createErrorResponse(
+        res,
+        401,
+        '사용자 인증이 실패했습니다.',
+        ERROR_CODES.UNAUTHORIZED
+      );
     }
 
     const { prompt, length } = req.body;
 
-    if (!prompt || prompt.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: '글 주제가 비어있습니다.',
-        code: '글 주제 입력 에러',
-      });
+    // 입력 검증
+    const promptValidation = validatePrompt(prompt, 5);
+    if (!promptValidation.isValid) {
+      return createErrorResponse(
+        res,
+        400,
+        promptValidation.message!,
+        ERROR_CODES.INVALID_INPUT
+      );
     }
 
-    if (!length || length <= 0 || length > 4000) {
-      return res.status(400).json({
-        success: false,
-        message: '글 길이는 1 ~ 4000 사이여야 합니다.',
-        code: '잘못된 글 길이',
-      });
+    const lengthValidation = validateArticleLength(length);
+    if (!lengthValidation.isValid) {
+      return createErrorResponse(
+        res,
+        400,
+        lengthValidation.message!,
+        ERROR_CODES.INVALID_INPUT
+      );
+    }
+
+    const plan = getUserPlan(req);
+    const freeUsage = getFreeUsage(req);
+
+    if (!validateUsageLimit(plan, freeUsage)) {
+      return createErrorResponse(
+        res,
+        429,
+        '무료 플랜 한계에 도달했습니다. 업그레이드해주세요.',
+        ERROR_CODES.USAGE_LIMIT_EXCEEDED
+      );
     }
 
     const sanitizedPrompt = sanitizeInput(prompt);
-    const plan = req.plan || 'free';
-    const freeUsage = req.free_usage || 0;
 
-    if (!validateUsageLimit(plan, freeUsage)) {
-      return res.status(429).json({
-        success: false,
-        message: '무료 플랜 한계에 도달했습니다. 업그레이드해주세요.',
-        code: '사용 제한 초과',
-      });
+    // AI 응답 생성
+    const content = await makeAIRequest(sanitizedPrompt, length);
+
+    // 데이터베이스 저장
+    await createUserCreation(userId, sanitizedPrompt, content, '글 작성');
+
+    // 무료 사용자 사용량 업데이트
+    if (plan !== 'premium') {
+      await updateUsage(userId, freeUsage);
     }
 
-    // AI 응답 생성 및 타임아웃 설정
-    const response = await Promise.race([
-      AI.chat.completions.create({
-        model: 'gemini-2.0-flash',
-        messages: [{ role: 'user', content: sanitizedPrompt }],
-        temperature: 0.7,
-        max_completion_tokens: length,
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('AI request timeout')), 30000)
-      ),
-    ]);
+    logSuccess('글 생성', userId, { length: content.length });
 
-    const content = response.choices[0]?.message?.content;
-
-    if (!content || content.trim().length === 0) {
-      return res.status(500).json({
-        success: false,
-        message: 'AI 응답 생성이 실패했습니다.',
-        code: 'AI 응답 실패',
-      });
-    }
-
-    try {
-      await sql`
-        INSERT INTO creations (user_id, prompt, content, type, created_at) 
-        VALUES (${userId}, ${sanitizedPrompt}, ${content}, 'article', NOW())
-      `;
-
-      if (plan !== 'premium') {
-        await updateUsage(userId, freeUsage);
-      }
-    } catch (dbError) {
-      logError('Database operation', dbError, userId);
-      return res.status(500).json({
-        success: false,
-        message: '데이터 저장에 실패했습니다.',
-        code: '데이터베이스 에러',
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
+    return createSuccessResponse(
+      res,
       content,
-      usage: plan !== 'premium' ? freeUsage + 1 : undefined,
-    });
+      plan !== 'premium' ? freeUsage + 1 : undefined
+    );
   } catch (error) {
-    let userId = 'unknown';
-    try {
-      const authResult = await req.auth();
-      userId = authResult.userId || 'unknown';
-    } catch {}
-
-    logError('글 생성', error, userId);
+    logError('글 생성', error, 'unknown');
 
     if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        message: '서비스 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
-        code: '내부 서버 오류',
-      });
+      return createErrorResponse(
+        res,
+        500,
+        '서비스 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
+        ERROR_CODES.INTERNAL_SERVER_ERROR
+      );
     }
 
     return res as Response<ContentResponse>;
@@ -222,107 +187,73 @@ export const blogTitle = async (
   req: Request<{}, ContentResponse, BlogTitleRequestBody>,
   res: Response<ContentResponse>
 ): Promise<Response<ContentResponse>> => {
+  let userId: string | null = null;
+
   try {
     validateEnvironment();
 
-    const { userId } = await req.auth();
-
-    if (!validateAuthentication(userId)) {
-      return res.status(401).json({
-        success: false,
-        message: '사용자 인증이 실패했습니다.',
-        code: '권한 없는 사용자',
-      });
+    userId = await safeExtractUserId(req);
+    if (!userId) {
+      return createErrorResponse(
+        res,
+        401,
+        '사용자 인증이 실패했습니다.',
+        ERROR_CODES.UNAUTHORIZED
+      );
     }
 
     const { prompt } = req.body;
 
-    // 입력 검증
-    if (!prompt || prompt.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: '키워드가 비어있습니다.',
-        code: '키워드 에러',
-      });
+    const promptValidation = validatePrompt(prompt, 2);
+    if (!promptValidation.isValid) {
+      return createErrorResponse(
+        res,
+        400,
+        promptValidation.message!,
+        ERROR_CODES.INVALID_INPUT
+      );
+    }
+
+    const plan = getUserPlan(req);
+    const freeUsage = getFreeUsage(req);
+
+    if (!validateUsageLimit(plan, freeUsage)) {
+      return createErrorResponse(
+        res,
+        429,
+        '무료 플랜 한계에 도달했습니다. 업그레이드해주세요.',
+        ERROR_CODES.USAGE_LIMIT_EXCEEDED
+      );
     }
 
     const sanitizedPrompt = sanitizeInput(prompt);
-    const plan = req.plan || 'free';
-    const freeUsage = req.free_usage || 0;
+    const enhancedPrompt = `다음 키워드로 매력적인 블로그 제목을 만들어주세요: ${sanitizedPrompt}`;
 
-    if (!validateUsageLimit(plan, freeUsage)) {
-      return res.status(429).json({
-        success: false,
-        message: '무료 플랜 한계에 도달했습니다. 업그레이드해주세요.',
-        code: '사용 제한 초과',
-      });
+    const content = await makeAIRequest(enhancedPrompt, 100, 0.8);
+
+    await createUserCreation(userId, sanitizedPrompt, content, '배경 제거');
+
+    if (plan !== 'premium') {
+      await updateUsage(userId, freeUsage);
     }
 
-    const response = await Promise.race([
-      AI.chat.completions.create({
-        model: 'gemini-2.0-flash',
-        messages: [
-          {
-            role: 'user',
-            content: `다음 키워드로 매력적인 제목을 만들어주세요: ${sanitizedPrompt}`,
-          },
-        ],
-        temperature: 0.8,
-        max_completion_tokens: 100,
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('AI request timeout')), 20000)
-      ),
-    ]);
+    logSuccess('제목 생성', userId);
 
-    const content = response.choices[0]?.message?.content;
-
-    if (!content || content.trim().length === 0) {
-      return res.status(500).json({
-        success: false,
-        message: 'AI 응답 생성이 실패했습니다.',
-        code: 'AI 응답 실패',
-      });
-    }
-
-    try {
-      await sql`
-        INSERT INTO creations (user_id, prompt, content, type, created_at) 
-        VALUES (${userId}, ${sanitizedPrompt}, ${content}, 'title', NOW())
-      `;
-
-      if (plan !== 'premium') {
-        await updateUsage(userId, freeUsage);
-      }
-    } catch (dbError) {
-      logError('Database operation', dbError, userId);
-      return res.status(500).json({
-        success: false,
-        message: '데이터 저장에 실패했습니다.',
-        code: '데이터베이스 에러',
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
+    return createSuccessResponse(
+      res,
       content,
-      usage: plan !== 'premium' ? freeUsage + 1 : undefined,
-    });
-  } catch (error) {
-    logError(
-      '제목 생성',
-      error,
-      req.auth
-        ? (await req.auth().catch(() => ({ userId: 'unknown' })))?.userId
-        : 'unknown'
+      plan !== 'premium' ? freeUsage + 1 : undefined
     );
+  } catch (error) {
+    logError('제목 생성', error, 'unknown');
 
     if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        message: '서비스 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
-        code: '내부 서버 오류',
-      });
+      return createErrorResponse(
+        res,
+        500,
+        '서비스 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
+        ERROR_CODES.INTERNAL_SERVER_ERROR
+      );
     }
 
     return res as Response<ContentResponse>;
@@ -333,51 +264,45 @@ export const images = async (
   req: Request<{}, ContentResponse, ImageRequestBody>,
   res: Response<ContentResponse>
 ): Promise<Response<ContentResponse>> => {
+  let userId: string | null = null;
+
   try {
     validateEnvironment();
 
-    const { userId } = await req.auth();
+    userId = await safeExtractUserId(req);
+    if (!userId) {
+      return createErrorResponse(
+        res,
+        401,
+        '사용자 인증이 실패했습니다.',
+        ERROR_CODES.UNAUTHORIZED
+      );
+    }
 
-    if (!validateAuthentication(userId)) {
-      return res.status(401).json({
-        success: false,
-        message: '사용자 인증이 실패했습니다.',
-        code: '권한 없는 사용자',
-      });
+    if (!isPremiumUser(req)) {
+      return createErrorResponse(
+        res,
+        403,
+        '이미지 생성은 프리미엄 사용자만 이용할 수 있습니다. 업그레이드해주세요.',
+        ERROR_CODES.PLAN_RESTRICTION
+      );
     }
 
     const { prompt, publish = false } = req.body;
 
-    if (!prompt || prompt.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: '이미지 설명이 비어있습니다.',
-        code: '이미지 생성 에러',
-      });
+    const promptValidation = validatePrompt(prompt, 3);
+    if (!promptValidation.isValid) {
+      return createErrorResponse(
+        res,
+        400,
+        promptValidation.message!,
+        ERROR_CODES.INVALID_INPUT
+      );
     }
 
     const sanitizedPrompt = sanitizeInput(prompt);
-    const plan = req.plan || 'free';
-
-    // 프리미엄 전용 기능
-    if (plan !== 'premium') {
-      return res.status(403).json({
-        success: false,
-        message:
-          '이미지 생성은 프리미엄 사용자만 이용할 수 있습니다. 업그레이드해주세요.',
-        code: '플랜 제한',
-      });
-    }
-
-    console.log(
-      'Starting Pollinations AI image generation for prompt:',
-      sanitizedPrompt
-    );
-
     const enhancedPrompt = `${sanitizedPrompt}, high quality, detailed, professional photography`;
     const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=512&height=512&model=flux&enhancement=true&seed=${Date.now()}`;
-
-    console.log('이미지 생성:', imageUrl);
 
     // 이미지 다운로드
     const { data: imageData } = await axios.get(imageUrl, {
@@ -389,12 +314,8 @@ export const images = async (
       throw new Error('이미지를 생성하지 못했습니다.');
     }
 
-    console.log('이미지 다운로드:', imageData.byteLength);
-
-    // 이미지를 Base64로 변환
-    const base64Image = `data:image/png;base64,${Buffer.from(imageData).toString('base64')}`;
-
     // Cloudinary 업로드
+    const base64Image = `data:image/png;base64,${Buffer.from(imageData).toString('base64')}`;
     const uploadResult = await cloudinary.uploader.upload(base64Image, {
       resource_type: 'image',
       folder: 'ai-generated-free',
@@ -409,42 +330,27 @@ export const images = async (
       throw new Error('Cloudinary upload failed');
     }
 
-    console.log('Cloudinary에 업로드 된 이미지:', uploadResult.secure_url);
+    await createUserCreation(
+      userId,
+      sanitizedPrompt,
+      uploadResult.secure_url,
+      '이미지 생성',
+      publish
+    );
 
-    try {
-      await sql`
-        INSERT INTO creations (user_id, prompt, content, type, publish, created_at)
-        VALUES (${userId}, ${sanitizedPrompt}, ${uploadResult.secure_url}, 'image', ${publish}, NOW())
-      `;
-      console.log('데이터베이스 레코드 생성 완료');
-    } catch (dbError) {
-      logError('Database operation', dbError, userId);
-      return res.status(500).json({
-        success: false,
-        message: '데이터 저장에 실패했습니다.',
-        code: '데이터베이스 에러',
-      });
-    }
+    logSuccess('이미지 생성', userId, { imageUrl: uploadResult.secure_url });
 
-    return res.status(200).json({
-      success: true,
-      content: uploadResult.secure_url,
-    });
-  } catch (error: unknown) {
-    let userId = 'unknown';
-    try {
-      const authResult = await req.auth();
-      userId = authResult.userId || 'unknown';
-    } catch {}
-
-    logError('Pollinations AI 이미지 생성', error, userId);
+    return createSuccessResponse(res, uploadResult.secure_url);
+  } catch (error) {
+    logError('이미지 생성', error, userId || 'unknown');
 
     if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        message: '이미지 생성에 실패했습니다. 잠시 후 다시 시도해주세요.',
-        code: '내부 서버 오류',
-      });
+      return createErrorResponse(
+        res,
+        500,
+        '이미지 생성에 실패했습니다. 잠시 후 다시 시도해주세요.',
+        ERROR_CODES.INTERNAL_SERVER_ERROR
+      );
     }
 
     return res as Response<ContentResponse>;
@@ -452,49 +358,45 @@ export const images = async (
 };
 
 export const background = async (
-  req: Request<{}, ContentResponse, BackgroundRequestBody>,
+  req: Request,
   res: Response<ContentResponse>
 ): Promise<Response<ContentResponse>> => {
+  let userId: string | null = null;
+
   try {
     validateEnvironment();
 
-    const { userId } = await req.auth();
-
-    if (!validateAuthentication(userId)) {
-      return res.status(401).json({
-        success: false,
-        message: '사용자 인증이 실패했습니다.',
-        code: '권한 없는 사용자',
-      });
+    userId = await safeExtractUserId(req);
+    if (!userId) {
+      return createErrorResponse(
+        res,
+        401,
+        '사용자 인증이 실패했습니다.',
+        ERROR_CODES.UNAUTHORIZED
+      );
     }
 
-    // 파일 검증
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: '이미지 파일이 업로드되지 않았습니다.',
-        code: '파일 업로드 에러',
-      });
+    if (!isPremiumUser(req)) {
+      return createErrorResponse(
+        res,
+        403,
+        '프리미엄 사용자만 이용할 수 있습니다. 업그레이드해주세요.',
+        ERROR_CODES.PLAN_RESTRICTION
+      );
     }
 
-    const plan = req.plan || 'free';
-
-    if (plan !== 'premium') {
-      return res.status(403).json({
-        success: false,
-        message: '프리미엄 사용자만 이용할 수 있습니다. 업그레이드해주세요.',
-        code: '플랜 제한',
-      });
+    const fileValidation = validateImageFile(req.file);
+    if (!fileValidation.isValid) {
+      return createErrorResponse(
+        res,
+        400,
+        fileValidation.message!,
+        ERROR_CODES.INVALID_INPUT
+      );
     }
 
-    console.log('Starting background removal');
-
-    const uploadResult = await cloudinary.uploader.upload(req.file.path, {
-      transformation: [
-        {
-          effect: 'background_removal',
-        },
-      ],
+    const uploadResult = await cloudinary.uploader.upload(req.file!.path, {
+      transformation: [{ effect: 'background_removal' }],
       folder: 'background-removed',
       public_id: `${userId}_${Date.now()}`,
     });
@@ -503,40 +405,26 @@ export const background = async (
       throw new Error('Background removal failed');
     }
 
-    try {
-      await sql`
-        INSERT INTO creations (user_id, prompt, content, type, created_at)
-        VALUES (${userId}, '이미지 배경 제거', ${uploadResult.secure_url}, 'background', NOW())
-      `;
-      console.log('데이터베이스 레코드 생성 완료');
-    } catch (dbError) {
-      logError('Database operation', dbError, userId);
-      return res.status(500).json({
-        success: false,
-        message: '데이터 저장에 실패했습니다.',
-        code: '데이터베이스 에러',
-      });
-    }
+    await createUserCreation(
+      userId,
+      '이미지 배경 제거',
+      uploadResult.secure_url,
+      '배경 제거'
+    );
 
-    return res.status(200).json({
-      success: true,
-      content: uploadResult.secure_url,
-    });
-  } catch (error: unknown) {
-    let userId = 'unknown';
-    try {
-      const authResult = await req.auth();
-      userId = authResult.userId || 'unknown';
-    } catch {}
+    logSuccess('배경 제거', userId);
 
-    logError('배경 제거', error, userId);
+    return createSuccessResponse(res, uploadResult.secure_url);
+  } catch (error) {
+    logError('배경 제거', error, userId || 'unknown');
 
     if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        message: '배경 제거에 실패했습니다. 잠시 후 다시 시도해주세요.',
-        code: '내부 서버 오류',
-      });
+      return createErrorResponse(
+        res,
+        500,
+        '배경 제거에 실패했습니다. 잠시 후 다시 시도해주세요.',
+        ERROR_CODES.INTERNAL_SERVER_ERROR
+      );
     }
 
     return res as Response<ContentResponse>;
@@ -547,94 +435,76 @@ export const object = async (
   req: Request<{}, ContentResponse, ObjectRemovalRequestBody>,
   res: Response<ContentResponse>
 ): Promise<Response<ContentResponse>> => {
+  let userId: string | null = null;
+
   try {
     validateEnvironment();
 
-    const { userId } = await req.auth();
-
-    if (!validateAuthentication(userId)) {
-      return res.status(401).json({
-        success: false,
-        message: '사용자 인증이 실패했습니다.',
-        code: '권한 없는 사용자',
-      });
+    userId = await safeExtractUserId(req);
+    if (!userId) {
+      return createErrorResponse(
+        res,
+        401,
+        '사용자 인증이 실패했습니다.',
+        ERROR_CODES.UNAUTHORIZED
+      );
     }
 
-    // 파일과 바디 검증
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: '이미지 파일이 업로드되지 않았습니다.',
-        code: '파일 업로드 에러',
-      });
+    if (!isPremiumUser(req)) {
+      return createErrorResponse(
+        res,
+        403,
+        '프리미엄 사용자만 이용할 수 있습니다. 업그레이드해주세요.',
+        ERROR_CODES.PLAN_RESTRICTION
+      );
     }
 
-    const { object } = req.body; // await 제거
-
-    if (!object || object.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: '제거할 객체를 입력해주세요.',
-        code: '객체 입력 에러',
-      });
+    const fileValidation = validateImageFile(req.file);
+    if (!fileValidation.isValid) {
+      return createErrorResponse(
+        res,
+        400,
+        fileValidation.message!,
+        ERROR_CODES.INVALID_INPUT
+      );
     }
 
-    const plan = req.plan || 'free';
-
-    if (plan !== 'premium') {
-      return res.status(403).json({
-        success: false,
-        message: '프리미엄 사용자만 이용할 수 있습니다. 업그레이드해주세요.',
-        code: '플랜 제한',
-      });
+    const { object } = req.body;
+    const objectValidation = validatePrompt(object, 2);
+    if (!objectValidation.isValid) {
+      return createErrorResponse(
+        res,
+        400,
+        '제거할 객체를 입력해주세요.',
+        ERROR_CODES.INVALID_INPUT
+      );
     }
 
-    console.log(`Starting object removal: ${object}`);
-
-    const uploadResult = await cloudinary.uploader.upload(req.file.path);
-
+    const uploadResult = await cloudinary.uploader.upload(req.file!.path);
     const imageUrl = cloudinary.url(uploadResult.public_id, {
-      transformation: [
-        {
-          effect: `gen_remove:${object}`,
-        },
-      ],
+      transformation: [{ effect: `gen_remove:${sanitizeInput(object)}` }],
     });
 
-    try {
-      await sql`
-        INSERT INTO creations (user_id, prompt, content, type, created_at)
-        VALUES (${userId}, ${`제거된 ${object} 이미지`}, ${imageUrl}, 'object-removal', NOW())
-      `;
-      console.log('데이터베이스 레코드 생성 완료');
-    } catch (dbError) {
-      logError('Database operation', dbError, userId);
-      return res.status(500).json({
-        success: false,
-        message: '데이터 저장에 실패했습니다.',
-        code: '데이터베이스 에러',
-      });
-    }
+    await createUserCreation(
+      userId,
+      `제거된 ${object} 이미지`,
+      imageUrl,
+      '요소 제거'
+    );
 
-    return res.status(200).json({
-      success: true,
-      content: imageUrl,
-    });
-  } catch (error: unknown) {
-    let userId = 'unknown';
-    try {
-      const authResult = await req.auth();
-      userId = authResult.userId || 'unknown';
-    } catch {}
+    logSuccess('객체 제거', userId, { object });
 
-    logError('객체 제거', error, userId);
+    return createSuccessResponse(res, imageUrl);
+  } catch (error) {
+    logError('객체 제거', error, 'unknown');
 
     if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        message: '객체 제거에 실패했습니다. 잠시 후 다시 시도해주세요.',
-        code: '내부 서버 오류',
-      });
+      return createErrorResponse(
+        res,
+        500,
+        '객체 제거에 실패했습니다. 잠시 후 다시 시도해주세요.',
+        ERROR_CODES.INTERNAL_SERVER_ERROR
+      );
     }
 
     return res as Response<ContentResponse>;
@@ -642,55 +512,45 @@ export const object = async (
 };
 
 export const resumes = async (
-  // 함수명 수정
-  req: Request<{}, ContentResponse, BackgroundRequestBody>,
+  req: Request,
   res: Response<ContentResponse>
 ): Promise<Response<ContentResponse>> => {
+  let userId: string | null = null;
+
   try {
     validateEnvironment();
 
-    const { userId } = await req.auth();
-
-    if (!validateAuthentication(userId)) {
-      return res.status(401).json({
-        success: false,
-        message: '사용자 인증이 실패했습니다.',
-        code: '권한 없는 사용자',
-      });
+    userId = await safeExtractUserId(req);
+    if (!userId) {
+      return createErrorResponse(
+        res,
+        401,
+        '사용자 인증이 실패했습니다.',
+        ERROR_CODES.UNAUTHORIZED
+      );
     }
 
-    const resume = req.file;
-
-    if (!resume) {
-      return res.status(400).json({
-        success: false,
-        message: 'PDF 파일을 업로드해주세요.',
-        code: '파일 업로드 에러',
-      });
+    if (!isPremiumUser(req)) {
+      return createErrorResponse(
+        res,
+        403,
+        '프리미엄 사용자만 이용할 수 있습니다. 업그레이드해주세요.',
+        ERROR_CODES.PLAN_RESTRICTION
+      );
     }
 
-    const plan = req.plan || 'free';
-
-    if (plan !== 'premium') {
-      return res.status(403).json({
-        success: false,
-        message: '프리미엄 사용자만 이용할 수 있습니다. 업그레이드해주세요.',
-        code: '플랜 제한',
-      });
+    const fileValidation = validatePdfFile(req.file);
+    if (!fileValidation.isValid) {
+      return createErrorResponse(
+        res,
+        400,
+        fileValidation.message!,
+        ERROR_CODES.INVALID_INPUT
+      );
     }
 
-    // 파일 크기 검증
-    if (resume.size > 5 * 1024 * 1024) {
-      return res.status(400).json({
-        success: false,
-        message: '파일이 허용된 용량을 초과했습니다. (5MB 이하)',
-        code: '파일 크기 초과',
-      });
-    }
-
-    console.log('Starting resume review');
-
-    const dataBuffer = fs.readFileSync(resume.path);
+    // PDF 파싱
+    const dataBuffer = fs.readFileSync(req.file!.path);
     const pdfData = await pdf(dataBuffer);
 
     const prompt = `
@@ -699,69 +559,35 @@ export const resumes = async (
     이력서 내용:
     ${pdfData.text}`;
 
-    const response = await Promise.race([
-      AI.chat.completions.create({
-        model: 'gemini-2.0-flash',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7,
-        max_completion_tokens: 1000,
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('AI request timeout')), 30000)
-      ),
-    ]);
+    const content = await makeAIRequest(prompt, 1000);
 
-    const content = response.choices[0]?.message?.content;
-
-    if (!content || content.trim().length === 0) {
-      return res.status(500).json({
-        success: false,
-        message: 'AI 응답 생성이 실패했습니다.',
-        code: 'AI 응답 실패',
-      });
-    }
-
-    try {
-      await sql`
-        INSERT INTO creations (user_id, prompt, content, type, created_at)
-        VALUES (${userId}, '업로드된 이력서 검토', ${content}, 'resume-review', NOW())
-      `;
-      console.log('데이터베이스 레코드 생성 완료');
-    } catch (dbError) {
-      logError('Database operation', dbError, userId);
-      return res.status(500).json({
-        success: false,
-        message: '데이터 저장에 실패했습니다.',
-        code: '데이터베이스 에러',
-      });
-    }
+    await createUserCreation(
+      userId,
+      '업로드된 이력서 검토',
+      content,
+      '이력서 피드백'
+    );
 
     // 임시 파일 삭제
     try {
-      fs.unlinkSync(resume.path);
+      fs.unlinkSync(req.file!.path);
     } catch (cleanupError) {
       console.warn('Failed to delete temporary file:', cleanupError);
     }
 
-    return res.status(200).json({
-      success: true,
-      content,
-    });
-  } catch (error: unknown) {
-    let userId = 'unknown';
-    try {
-      const authResult = await req.auth();
-      userId = authResult.userId || 'unknown';
-    } catch {}
+    logSuccess('이력서 검토', userId);
 
-    logError('이력서 검토', error, userId);
+    return createSuccessResponse(res, content);
+  } catch (error) {
+    logError('이력서 검토', error, 'unknown');
 
     if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        message: '이력서 검토에 실패했습니다. 잠시 후 다시 시도해주세요.',
-        code: '내부 서버 오류',
-      });
+      return createErrorResponse(
+        res,
+        500,
+        '이력서 검토에 실패했습니다. 잠시 후 다시 시도해주세요.',
+        ERROR_CODES.INTERNAL_SERVER_ERROR
+      );
     }
 
     return res as Response<ContentResponse>;
