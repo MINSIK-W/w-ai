@@ -1,6 +1,6 @@
 import { clerkClient } from '@clerk/express';
 import { Request } from 'express';
-import { logError } from '@/utils/logger';
+import { logError } from '../utils/logger';
 // 인증 관련 유틸리티 함수
 // 사용자 인증 정보 안전하게 추출
 export const safeExtractUserId = async (

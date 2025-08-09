@@ -3,14 +3,11 @@
   "version": "1.0.0",
   "main": "src/server.ts",
   "type": "module",
-  "_moduleAliases": {
-    "@": "./dist"
-  },
   "scripts": {
-    "server": "node -r module-alias/register dist/server.js",
+    "server": "nodemon -r dotenv/config --exec tsx src/server.ts",
     "start": "node src/server.ts",
     "build": "tsc",
-    "vercel-build": "tsc"
+    "vercel-build": "echo 'No build step required'"
   },
   "keywords": [],
   "author": "",

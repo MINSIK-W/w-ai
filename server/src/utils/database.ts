@@ -1,4 +1,4 @@
-import sql from '@/configs/db';
+import sql from '../configs/db';
 import {
   RawUserCreation,
   transformRawCreation,
