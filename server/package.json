@@ -3,11 +3,14 @@
   "version": "1.0.0",
   "main": "src/server.ts",
   "type": "module",
+  "_moduleAliases": {
+    "@": "./dist"
+  },
   "scripts": {
-    "server": "nodemon -r dotenv/config --exec tsx src/server.ts",
+    "server": "node -r module-alias/register dist/server.js",
     "start": "node src/server.ts",
     "build": "tsc",
-    "vercel-build": "echo 'No build step required'"
+    "vercel-build": "tsc"
   },
   "keywords": [],
   "author": "",
@@ -22,6 +25,7 @@
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "express-rate-limit": "^8.0.1",
+    "module-alias": "^2.2.3",
     "multer": "^2.0.2",
     "openai": "^5.11.0",
     "pdf-parse": "^1.1.1",
