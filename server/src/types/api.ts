@@ -1,4 +1,4 @@
-import { UserCreation } from '../types/database';
+import { UserCreation } from '../types/database.js';
 
 // 기본 응답 타입
 export interface BaseResponse {

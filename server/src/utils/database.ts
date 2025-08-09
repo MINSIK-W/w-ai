@@ -1,11 +1,11 @@
-import sql from '../configs/db';
+import sql from '../configs/db.js';
 import {
   RawUserCreation,
   transformRawCreation,
   UserCreation,
   CreationType,
 } from '@/types';
-import { logError } from './logger';
+import { logError } from './logger.js';
 // 데이터베이스 헬퍼 함수
 // 사용자 게시물 생성
 export const createUserCreation = async (

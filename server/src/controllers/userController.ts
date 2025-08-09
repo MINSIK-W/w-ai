@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import sql from '../configs/db';
+import sql from '../configs/db.js';
 
 // 타입 정의
 interface UserCreation {
